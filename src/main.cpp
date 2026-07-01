@@ -5,6 +5,8 @@
 
 // ── Config ────────────────────────────────────────────────────────────────────
 #define FLOW_PIN          4           // GPIO 18/19 are USB D-/D+ on ESP32-C3, use 4 instead
+#define LED_PIN           10          // external LED -- board has no onboard LED; wire
+                                       // GPIO10 -> 220-330R resistor -> LED anode -> cathode -> GND
 #define PULSES_PER_GALLON 450.0f      // CALIBRATE: actual_pulses / measured_gallons
 // At 50 GPM: 375 Hz → 2.67 ms period.  DEBOUNCE_US must be < 1333 µs (half-period).
 // Start at 500 µs; if you still see double-counts, lower to 200 µs.
@@ -95,6 +97,7 @@ void setup() {
     portEXIT_CRITICAL(&isr_mux);
     Serial.printf("Resumed: %llu pulses (%.1f gal)\n", saved, saved / PULSES_PER_GALLON);
 
+    pinMode(LED_PIN,  OUTPUT);
     pinMode(FLOW_PIN, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(FLOW_PIN), onPulse, FALLING);
 
@@ -144,7 +147,10 @@ void loop() {
         Serial.println(payload);
 
         if (mqtt.connected()) {
+            digitalWrite(LED_PIN, HIGH);
             mqtt.publish(MQTT_TOPIC, payload, /*retained=*/false);
+            delay(100);
+            digitalWrite(LED_PIN, LOW);
         }
     }
 

@@ -5,9 +5,12 @@ and publishes flow rate / cumulative usage to MQTT.
 
 ## Hardware
 
-- ESP32-C3 DevKitM-1
+- ESP32-C3 DevKitM-1 (no onboard user LED — confirmed by scanning GPIO2/8/9/10,
+  only the red power LED lit)
 - Pulse-output flow meter wired to GPIO 4 (GPIO 18/19 are USB D-/D+ on the
   ESP32-C3, so they're avoided)
+- External status LED on GPIO 10 (220-330Ω resistor -> LED anode -> cathode ->
+  GND), flashed briefly on each MQTT publish
 
 ## Firmware
 
