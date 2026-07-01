@@ -5,18 +5,16 @@
 
 // ── Config ────────────────────────────────────────────────────────────────────
 #define FLOW_PIN          4           // GPIO 18/19 are USB D-/D+ on ESP32-C3, use 4 instead
-#define LED_PIN           2           // built-in LED on esp32dev
 #define PULSES_PER_GALLON 450.0f      // CALIBRATE: actual_pulses / measured_gallons
 // At 50 GPM: 375 Hz → 2.67 ms period.  DEBOUNCE_US must be < 1333 µs (half-period).
 // Start at 500 µs; if you still see double-counts, lower to 200 µs.
 #define DEBOUNCE_US       500
-const char* WIFI_SSID     = "ForeverShop";
-const char* WIFI_PASSWORD = "@1680Division";
-const char* MQTT_BROKER   = "172.26.0.11";   // your existing Mosquitto broker
+#include "secrets.h"   // copy secrets.h.template → secrets.h and fill in your values
 
-#define MQTT_PORT      1883
-#define MQTT_TOPIC     "pumphouse/flow"
-#define MQTT_CLIENT_ID "pumphouse-esp32"
+#define MQTT_PORT         1883
+#define MQTT_TOPIC        "ranch/water/flow"
+#define MQTT_TOPIC_STATUS "ranch/water/status"
+#define MQTT_CLIENT_ID    "pumphouse-esp32"
 // Uncomment if broker requires auth:
 // #define MQTT_USER   "user"
 // #define MQTT_PASS   "pass"
@@ -97,7 +95,6 @@ void setup() {
     portEXIT_CRITICAL(&isr_mux);
     Serial.printf("Resumed: %llu pulses (%.1f gal)\n", saved, saved / PULSES_PER_GALLON);
 
-    pinMode(LED_PIN,  OUTPUT);
     pinMode(FLOW_PIN, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(FLOW_PIN), onPulse, FALLING);
 
@@ -111,7 +108,7 @@ void setup() {
         snprintf(statusMsg, sizeof(statusMsg),
                  "boot pin=%d pulses_per_gal=%.0f total_pulses=%llu total_gal=%.1f",
                  FLOW_PIN, PULSES_PER_GALLON, saved, saved / PULSES_PER_GALLON);
-        mqtt.publish("pumphouse/flow/status", statusMsg);
+        mqtt.publish(MQTT_TOPIC_STATUS, statusMsg);
         Serial.println(statusMsg);
     }
 }
@@ -140,16 +137,14 @@ void loop() {
         const float gpm          = (n / PULSES_PER_GALLON) / (PUBLISH_MS / 60000.0f);
         const float totalGallons = tot / PULSES_PER_GALLON;
 
-        char payload[72];
+        char payload[96];
         snprintf(payload, sizeof(payload),
-                 "{\"gpm\":%.2f,\"total_gallons\":%.3f}", gpm, totalGallons);
+                 "{\"gpm\":%.2f,\"gallons_total\":%.3f,\"pulse_count\":%llu}",
+                 gpm, totalGallons, (unsigned long long)tot);
         Serial.println(payload);
 
         if (mqtt.connected()) {
-            digitalWrite(LED_PIN, HIGH);
             mqtt.publish(MQTT_TOPIC, payload, /*retained=*/false);
-            delay(100);
-            digitalWrite(LED_PIN, LOW);
         }
     }
 
