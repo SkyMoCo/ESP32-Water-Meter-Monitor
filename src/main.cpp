@@ -11,12 +11,23 @@
 // At 50 GPM: 375 Hz → 2.67 ms period.  DEBOUNCE_US must be < 1333 µs (half-period).
 // Start at 500 µs; if you still see double-counts, lower to 200 µs.
 #define DEBOUNCE_US       500
+
+// 0-100 PSI sensor (0.5-4.5V linear output) on well pump discharge, read via a
+// 4.7k (sensor->pin) / 10k (pin->GND) divider so 0.5-4.5V maps to ~0.34-3.06V,
+// safely inside the ESP32-C3 ADC's 3.3V max input.
+#define PRESSURE_PIN            3      // ADC1_CH3 -- GPIO0/4/10/18/19 already spoken for; avoid GPIO2 (boot strap)
+#define PRESSURE_DIVIDER_RATIO  (10.0f / (4.7f + 10.0f))  // R2 / (R1 + R2)
+#define PRESSURE_V_MIN          0.5f   // sensor output at 0 PSI
+#define PRESSURE_V_MAX          4.5f   // sensor output at 100 PSI
+#define PRESSURE_PSI_MAX        100.0f
+
 #include "secrets.h"   // copy secrets.h.template → secrets.h and fill in your values
 
-#define MQTT_PORT         1883
-#define MQTT_TOPIC        "ranch/water/flow"
-#define MQTT_TOPIC_STATUS "ranch/water/status"
-#define MQTT_CLIENT_ID    "pumphouse-esp32"
+#define MQTT_PORT             1883
+#define MQTT_TOPIC            "ranch/water/flow"
+#define MQTT_TOPIC_PRESSURE   "ranch/water/pressure"
+#define MQTT_TOPIC_STATUS     "ranch/water/status"
+#define MQTT_CLIENT_ID        "pumphouse-esp32"
 // Uncomment if broker requires auth:
 // #define MQTT_USER   "user"
 // #define MQTT_PASS   "pass"
@@ -85,6 +96,15 @@ static void nvsFlush() {
     prefs.putULong64("total", total);
 }
 
+// Reads the pressure sensor, undoes the divider, and maps 0.5-4.5V to 0-100 PSI.
+static float readPressurePsi(float* outSensorVolts) {
+    const uint32_t mv       = analogReadMilliVolts(PRESSURE_PIN);  // calibrated mV at the pin
+    const float    vAtPin   = mv / 1000.0f;
+    const float    vSensor  = vAtPin / PRESSURE_DIVIDER_RATIO;
+    if (outSensorVolts) *outSensorVolts = vSensor;
+    return (vSensor - PRESSURE_V_MIN) / (PRESSURE_V_MAX - PRESSURE_V_MIN) * PRESSURE_PSI_MAX;
+}
+
 // ── Arduino ───────────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
@@ -100,6 +120,8 @@ void setup() {
     pinMode(LED_PIN,  OUTPUT);
     pinMode(FLOW_PIN, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(FLOW_PIN), onPulse, FALLING);
+
+    analogSetPinAttenuation(PRESSURE_PIN, ADC_11db);  // full 0-3.3V range for the divided signal
 
     wifiEnsure();
     mqtt.setServer(MQTT_BROKER, MQTT_PORT);
@@ -146,9 +168,17 @@ void loop() {
                  gpm, totalGallons, (unsigned long long)tot);
         Serial.println(payload);
 
+        float       sensorVolts = 0.0f;
+        const float psi         = readPressurePsi(&sensorVolts);
+        char pressurePayload[64];
+        snprintf(pressurePayload, sizeof(pressurePayload),
+                 "{\"psi\":%.1f,\"volts\":%.3f}", psi, sensorVolts);
+        Serial.println(pressurePayload);
+
         if (mqtt.connected()) {
             digitalWrite(LED_PIN, HIGH);
             mqtt.publish(MQTT_TOPIC, payload, /*retained=*/false);
+            mqtt.publish(MQTT_TOPIC_PRESSURE, pressurePayload, /*retained=*/false);
             delay(100);
             digitalWrite(LED_PIN, LOW);
         }

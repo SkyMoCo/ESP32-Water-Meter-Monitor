@@ -11,6 +11,13 @@ and publishes flow rate / cumulative usage to MQTT.
   ESP32-C3, so they're avoided)
 - External status LED on GPIO 10 (220-330Ω resistor -> LED anode -> cathode ->
   GND), flashed briefly on each MQTT publish
+- 0-100 PSI pressure sensor (0.5-4.5V linear output, 5V supply) on the well
+  pump discharge line, powered from the DevKitM-1's `5V` pin (VBUS — only
+  live because this board runs off a USB wall adapter; would need a separate
+  5V supply if it were ever run from a raw 3.3V source instead). Signal wired
+  to GPIO 3 through a 4.7kΩ (sensor -> pin) / 10kΩ (pin -> GND) divider — the
+  sensor's 4.5V max output exceeds the ESP32-C3 ADC's 3.3V max input, so it
+  must never be wired directly to a GPIO. Sensor GND shares the ESP32's GND.
 
 ## Firmware
 
@@ -22,6 +29,10 @@ Source: [src/main.cpp](src/main.cpp)
   measured volume for your specific meter)
 - Publishes JSON (`{"gpm":...,"gallons_total":...,"pulse_count":...}`) to
   `ranch/water/flow` every `PUBLISH_MS` (5s default)
+- Reads the pressure sensor via `analogReadMilliVolts` (uses the ESP32's
+  built-in ADC calibration), undoes the divider, and maps 0.5-4.5V to 0-100
+  PSI; publishes JSON (`{"psi":...,"volts":...}`) to `ranch/water/pressure`
+  on the same interval
 - Publishes a boot status message to `ranch/water/status`
 - Persists the cumulative pulse count to NVS (flash) every `NVS_SAVE_MS`
   (5 min default) so total usage survives power loss/reboot

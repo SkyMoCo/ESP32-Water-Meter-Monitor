@@ -8,11 +8,11 @@
         {
             "name": "PlatformIO",
             "includePath": [
-                "C:/Users/rando/Repo/ESP32 Pulse Counter/include",
-                "C:/Users/rando/Repo/ESP32 Pulse Counter/src",
+                "C:/Users/rando/Repos/ESP32 Water Meter Monitor/include",
+                "C:/Users/rando/Repos/ESP32 Water Meter Monitor/src",
                 "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
                 "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
-                "C:/Users/rando/Repo/ESP32 Pulse Counter/.pio/libdeps/esp32-c3-devkitm-1/PubSubClient/src",
+                "C:/Users/rando/Repos/ESP32 Water Meter Monitor/.pio/libdeps/esp32-c3-devkitm-1/PubSubClient/src",
                 "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
                 "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include",
                 "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include/esp_additions/freertos",
@@ -242,11 +242,11 @@
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "C:/Users/rando/Repo/ESP32 Pulse Counter/include",
-                    "C:/Users/rando/Repo/ESP32 Pulse Counter/src",
+                    "C:/Users/rando/Repos/ESP32 Water Meter Monitor/include",
+                    "C:/Users/rando/Repos/ESP32 Water Meter Monitor/src",
                     "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
                     "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
-                    "C:/Users/rando/Repo/ESP32 Pulse Counter/.pio/libdeps/esp32-c3-devkitm-1/PubSubClient/src",
+                    "C:/Users/rando/Repos/ESP32 Water Meter Monitor/.pio/libdeps/esp32-c3-devkitm-1/PubSubClient/src",
                     "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/newlib/platform_include",
                     "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include",
                     "C:/Users/rando/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32c3/include/freertos/include/esp_additions/freertos",
