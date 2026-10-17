@@ -88,17 +88,23 @@ Source: [src/main.cpp](src/main.cpp)
 
 - Qualifies pulses entirely inside an IRAM interrupt handler, on `CHANGE`: a
   pulse counts only on contact *release*, and only if the contact stayed
-  asserted for at least `MIN_LOW_MS` (default 5 ms) and no sooner than
-  `MIN_PERIOD_MS` (default 20 ms) after the last accepted pulse. A transient
+  asserted for at least `MIN_LOW_MS` (default 20 ms) and no sooner than
+  `MIN_PERIOD_MS` (default 100 ms) after the last accepted pulse. A transient
   cannot satisfy a width requirement, and doing the work in the ISR means
-  nothing is lost while `loop()` is blocked reconnecting WiFi.
+  nothing is lost while `loop()` is blocked reconnecting WiFi. `MIN_LOW_MS`
+  must exceed a mains half-cycle (8.3 ms at 60 Hz): at the earlier 5 ms, hum
+  on the line was accepted every other cycle and read as a steady ~135 GPM.
 - Converts pulses to cubic feet using `PULSES_PER_CF`, and to gallons at
   7.48052 gal/cf (calibrate against a measured volume for your specific meter)
 - Publishes JSON (`{"gpm":...,"gallons_total":...,"cf_total":...,
   "pulse_count":...,"suspect":...}`) to `ranch/water/flow` every `PUBLISH_MS`
-  (5s default); `suspect` is true when the rate exceeds `MAX_PLAUSIBLE_GPM`
+  (5s default); `suspect` is true when the rate exceeds `MAX_PLAUSIBLE_GPM`.
+  `gpm` comes from the time between pulses (a 5 s window at 0.748 gal/pulse
+  could only show multiples of ~9 GPM); it decays while the next pulse is
+  overdue and reads 0 after `FLOW_STOP_MS` (2 min) without one.
 - Publishes counters to `ranch/water/diag` on the same interval
-  (`{"edges":...,"accepted":...,"short_lows":...,"too_fast":...,"pin":...,
+  (`{"edges":...,"accepted":...,"short_lows":...,"too_fast":...,
+  "short_max_ms":...,"accept_min_ms":...,"pin":...,
   "rssi":...}`). With a clean front end `edges` is almost exactly 2× `accepted`,
   one assert plus one release per pulse. Many `short_lows` with zero `accepted`
   means noise is still getting in.
@@ -117,9 +123,9 @@ Source: [src/main.cpp](src/main.cpp)
 1. Copy [include/secrets.h.template](include/secrets.h.template) to
    `include/secrets.h` and fill in your WiFi SSID/password and MQTT broker
    address. `secrets.h` is gitignored — never commit real credentials.
-2. Calibrate `PULSES_PER_CF` in [src/main.cpp](src/main.cpp) against your actual
-   meter (actual_pulses / measured_cubic_feet). The default of 100 is what the
-   existing MQTT history implies; confirm it against the meter's register face.
+2. Set `PULSES_PER_CF` in [src/main.cpp](src/main.cpp) for your meter. This
+   meter's reed output is 0.748 gal (0.1 cf) per pulse, so the value is 10; the
+   earlier default of 100 read flow 10x low.
    Note that a mechanical reed cannot produce the 450 pulses/gallon this repo
    previously assumed — that would be 150 Hz at the meter's rated flow.
 3. If your broker requires auth, uncomment `MQTT_USER`/`MQTT_PASS` in

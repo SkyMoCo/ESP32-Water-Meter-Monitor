@@ -25,18 +25,22 @@
                                      // 0 = closure drives it HIGH (only if an inverting front end is ever added)
 
 // Pulse qualification.  A real closure holds the line asserted for tens of ms:
-// at 100 pulses/cf a 3/4" meter running at its ~20 GPM rating turns over 4.5
-// times a second (224 ms period), so the closure is ~100 ms.  Anything asserted
+// at 10 pulses/cf (0.748 gal/pulse) a 3/4" meter running at its ~20 GPM rating
+// pulses every 2.2 s, so the closure is on the order of a second.  A ~11 GPM
+// sprinkler zone measured one magnet revolution (= one pulse) per ~4 s.  Anything asserted
 // for less than MIN_LOW_MS is contact bounce or noise, not water.
-#define MIN_LOW_MS          5        // 20x margin against the shortest plausible real closure
-#define MIN_PERIOD_MS       20       // reject a second pulse sooner than this (>50 Hz is not physical here)
+//
+// MIN_LOW_MS must also clear a half-cycle of mains hum (8.3 ms at 60 Hz, 10 ms
+// at 50 Hz).  At 5 ms, hum coupled onto the line passed as real closures, and
+// since MIN_PERIOD only drops every other one, it read as a steady ~135 GPM.
+#define MIN_LOW_MS          20       // 2x a mains half-cycle; still well under a real closure
+#define MIN_PERIOD_MS       100      // 10 Hz = 450 GPM at 10 pulses/cf, far above anything this meter can do
 #define MAX_PLAUSIBLE_GPM   30.0f    // above the meter's rating -> flag the sample as suspect
 
 // ── Calibration ───────────────────────────────────────────────────────────────
-// CALIBRATE: run a known volume through the meter and set this to
-// actual_pulses / measured_cubic_feet.  100 is what the existing MQTT history
-// implies; confirm it against the meter's register face before trusting totals.
-#define PULSES_PER_CF     100.0f
+// Meter's reed output is 0.748 gal/pulse = 0.1 cf/pulse (one pulse per magnet
+// revolution).  The earlier value of 100 undercounted flow 10x.
+#define PULSES_PER_CF     10.0f
 #define GAL_PER_CF        7.48052f
 
 // 0-100 PSI sensor (0.5-4.5V linear output) on well pump discharge, read via a
@@ -69,6 +73,7 @@
 
 #define PUBLISH_MS   5000     // publish interval
 #define NVS_SAVE_MS  300000   // flush total pulses to flash every 5 min (only if it changed)
+#define FLOW_STOP_MS 120000   // no pulse for this long -> report 0 GPM (floor of ~0.37 GPM at 0.748 gal/pulse)
 
 #define MIN_LOW_US     (MIN_LOW_MS * 1000ULL)
 #define MIN_PERIOD_US  (MIN_PERIOD_MS * 1000ULL)
@@ -84,9 +89,12 @@ static volatile uint64_t totalPulses    = 0;
 static volatile uint32_t edgeCount     = 0;   // interrupts seen
 static volatile uint32_t shortLowCount = 0;   // asserted too briefly -- noise, or normal contact bounce
 static volatile uint32_t tooFastCount  = 0;   // valid-looking but impossibly soon after the last accepted pulse
+static volatile uint32_t maxShortUs    = 0;   // longest rejected closure this interval -- how close noise/bounce gets to MIN_LOW
+static volatile uint32_t minAcceptUs   = 0;   // shortest accepted closure this interval, 0 if none
 
 static volatile uint64_t assertedUs    = 0;   // start of the closure currently in progress, 0 if none
 static volatile uint64_t lastAcceptUs  = 0;
+static volatile uint64_t lastPeriodUs  = 0;   // time between the last two accepted pulses, 0 until there are two
 
 // ── ISR ───────────────────────────────────────────────────────────────────────
 // Qualification happens entirely in here, so nothing is lost while loop() is
@@ -110,12 +118,16 @@ void IRAM_ATTR onEdge() {
     } else if (assertedUs != 0) {
         const uint64_t heldUs = now - assertedUs;
         assertedUs = 0;
+        const uint32_t held32 = heldUs > UINT32_MAX ? UINT32_MAX : (uint32_t)heldUs;
         if (heldUs < MIN_LOW_US) {
             ++shortLowCount;
+            if (held32 > maxShortUs) maxShortUs = held32;
         } else if (lastAcceptUs != 0 && (now - lastAcceptUs) < MIN_PERIOD_US) {
             ++tooFastCount;
         } else {
+            if (lastAcceptUs != 0) lastPeriodUs = now - lastAcceptUs;
             lastAcceptUs = now;
+            if (minAcceptUs == 0 || held32 < minAcceptUs) minAcceptUs = held32;
             ++intervalPulses;
             ++totalPulses;
         }
@@ -245,11 +257,24 @@ void loop() {
         const uint32_t edges     = edgeCount;     edgeCount     = 0;
         const uint32_t shortLows = shortLowCount; shortLowCount = 0;
         const uint32_t tooFast   = tooFastCount;  tooFastCount  = 0;
+        const uint32_t shortMax  = maxShortUs;    maxShortUs    = 0;
+        const uint32_t acceptMin = minAcceptUs;   minAcceptUs   = 0;
+        const uint64_t lastPulse = lastAcceptUs;
+        const uint64_t period    = lastPeriodUs;
         portEXIT_CRITICAL(&isr_mux);
 
         const float cfTotal      = tot / PULSES_PER_CF;
         const float totalGallons = cfTotal * GAL_PER_CF;
-        const float gpm          = (n / PULSES_PER_CF) * GAL_PER_CF / (PUBLISH_MS / 60000.0f);
+
+        // GPM from the time between pulses rather than pulses per window: at
+        // 0.748 gal/pulse a 5 s window can only show multiples of ~9 GPM. Once
+        // the next pulse is overdue, the elapsed time is used instead, so the
+        // reading decays as flow slows and drops to 0 after FLOW_STOP_MS.
+        const uint64_t sinceUs   = lastPulse ? esp_timer_get_time() - lastPulse : 0;
+        const uint64_t spanUs    = period > sinceUs ? period : sinceUs;
+        const float    gpm       = (period == 0 || spanUs > FLOW_STOP_MS * 1000ULL)
+                                   ? 0.0f
+                                   : (GAL_PER_CF / PULSES_PER_CF) * 60e6f / (float)spanUs;
         const bool  suspect      = gpm > MAX_PLAUSIBLE_GPM;
 
         char payload[192];
@@ -263,12 +288,16 @@ void loop() {
         // edges should be almost exactly 2x accepted when the front end is
         // clean (one assert + one release per pulse). A large short_lows count
         // with zero accepted means noise is still getting in.
-        char diagPayload[160];
+        // short_max_ms / accept_min_ms show where real closures and rejects
+        // actually fall relative to MIN_LOW_MS.
+        char diagPayload[224];
         snprintf(diagPayload, sizeof(diagPayload),
                  "{\"edges\":%lu,\"accepted\":%lu,\"short_lows\":%lu,"
-                 "\"too_fast\":%lu,\"pin\":%d,\"rssi\":%d}",
+                 "\"too_fast\":%lu,\"short_max_ms\":%.1f,\"accept_min_ms\":%.1f,"
+                 "\"pin\":%d,\"rssi\":%d}",
                  (unsigned long)edges, (unsigned long)n, (unsigned long)shortLows,
-                 (unsigned long)tooFast, gpio_get_level((gpio_num_t)FLOW_PIN),
+                 (unsigned long)tooFast, shortMax / 1000.0f, acceptMin / 1000.0f,
+                 gpio_get_level((gpio_num_t)FLOW_PIN),
                  WiFi.RSSI());
         Serial.println(diagPayload);
 
