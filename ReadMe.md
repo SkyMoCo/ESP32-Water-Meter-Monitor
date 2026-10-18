@@ -51,8 +51,8 @@ The fix is source impedance, not shielding:
 - **R1 is the whole fix.** At 45 kΩ it takes ~70 µA to fake an edge; at 1 kΩ it
   takes 3.3 mA. A contactor spike through a few pF delivers roughly half a
   milliamp — comfortably over the first threshold, nowhere near the second.
-- C1 keeps noise from flooding the ISR with edges even when it is too short to
-  be counted as a pulse.
+- C1 filters fast spikes so the 1 ms samples see a cleaner level; the
+  firmware's 20 ms settle time rejects anything longer that still gets through.
 - Land the armor on ESP32 GND at the enclosure entry, **one point only**. It
   will not fix anything, but don't build a loop with it either.
 - 3.3 mA is adequate wetting current for a sealed glass reed. (Oxide buildup is
@@ -86,28 +86,30 @@ wrong:
 
 Source: [src/main.cpp](src/main.cpp)
 
-- Qualifies pulses entirely inside an IRAM interrupt handler, on `CHANGE`: a
-  pulse counts only on contact *release*, and only if the contact stayed
-  asserted for at least `MIN_LOW_MS` (default 20 ms) and no sooner than
-  `MIN_PERIOD_MS` (default 100 ms) after the last accepted pulse. A transient
-  cannot satisfy a width requirement, and doing the work in the ISR means
-  nothing is lost while `loop()` is blocked reconnecting WiFi. `MIN_LOW_MS`
-  must exceed a mains half-cycle (8.3 ms at 60 Hz): at the earlier 5 ms, hum
-  on the line was accepted every other cycle and read as a steady ~135 GPM.
+- Samples the flow pin every `SAMPLE_MS` (1 ms) from a high-priority
+  `esp_timer`, and only changes the contact's state once the pin has held the
+  new level for `SETTLE_MS` (20 ms) straight. A pulse counts on each settled
+  closed → open change, no sooner than `MIN_PERIOD_MS` (100 ms) after the last.
+  Noise and hum can't hold a level for 20 ms (a 60 Hz half-cycle is 8.3 ms;
+  at the earlier 5 ms threshold hum read as a steady ~135 GPM), while real
+  closures last seconds. The earlier edge-interrupt version read the pin level
+  once per edge, so one misread at a real release could silently drop that
+  pulse; sampling can't. The timer task outranks `loop()`, so nothing is lost
+  while WiFi reconnects.
 - Converts pulses to cubic feet using `PULSES_PER_CF`, and to gallons at
   7.48052 gal/cf (calibrate against a measured volume for your specific meter)
 - Publishes JSON (`{"gpm":...,"gallons_total":...,"cf_total":...,
   "pulse_count":...,"suspect":...}`) to `ranch/water/flow` every `PUBLISH_MS`
-  (5s default); `suspect` is true when the rate exceeds `MAX_PLAUSIBLE_GPM`.
+  (15 s default); `suspect` is true when the rate exceeds `MAX_PLAUSIBLE_GPM`.
   `gpm` comes from the time between pulses (a 5 s window at 0.748 gal/pulse
   could only show multiples of ~9 GPM); it decays while the next pulse is
   overdue and reads 0 after `FLOW_STOP_MS` (2 min) without one.
-- Publishes counters to `ranch/water/diag` on the same interval
-  (`{"edges":...,"accepted":...,"short_lows":...,"too_fast":...,
-  "short_max_ms":...,"accept_min_ms":...,"pin":...,
-  "rssi":...}`). With a clean front end `edges` is almost exactly 2× `accepted`,
-  one assert plus one release per pulse. Many `short_lows` with zero `accepted`
-  means noise is still getting in.
+- Publishes counters to `ranch/water/diag` every `DIAG_MS` (60 s), covering that minute
+  (`{"edges":...,"accepted":...,"glitches":...,"too_fast":...,
+  "glitch_max_ms":...,"accept_min_ms":...,"pin":...,"rssi":...}`). With a
+  clean front end `edges` is almost exactly 2× `accepted`, one close plus one
+  open per pulse. `glitches` are excursions that reverted before `SETTLE_MS`;
+  `glitch_max_ms` creeping toward 20 means noise is close to faking a pulse.
 - Reads the pressure sensor via `analogReadMilliVolts` (uses the ESP32's
   built-in ADC calibration), undoes the divider, and maps 0.5-4.5V to 0-100
   PSI; publishes JSON (`{"psi":...,"volts":...}`) to `ranch/water/pressure`
